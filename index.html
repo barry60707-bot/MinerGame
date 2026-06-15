@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>簡易鑽地車挖礦遊戲 - 策略調整版</title>
+    <style>
+        body {
+            background-color: #1e272e;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { margin-bottom: 10px; }
+        #game-container {
+            display: flex;
+            gap: 20px;
+            background: #2f3640;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+        }
+        canvas {
+            border: 4px solid #1e272e;
+            background-color: #000000;
+        }
+        #ui-panel {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            width: 280px;
+        }
+        .status-box {
+            background: #1e272e;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+        .status-item {
+            margin: 8px 0;
+            font-size: 16px;
+        }
+        .highlight { font-weight: bold; color: #f1c40f; }
+        .danger { font-weight: bold; color: #e74c3c; }
+        
+        /* 探測器加購區樣式 */
+        .upgrade-shop {
+            background: #353b48;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            border: 1px solid #7f8fa6;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .upgrade-shop input {
+            transform: scale(1.3);
+            cursor: pointer;
+        }
+
+        button {
+            background: #d35400;
+            color: white;
+            border: none;
+            padding: 12px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: 0.2s;
+            margin-top: 5px;
+        }
+        button:hover { background: #b33939; }
+        button:disabled { background: #718093; cursor: not-allowed; }
+        #return-btn { background: #2cd36f; }
+        #return-btn:hover { background: #218c4e; }
+        #log {
+            height: 120px;
+            background: #111;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            overflow-y: auto;
+            color: #dcdde1;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🚜 鑽地車挖礦冒險 (策略優化版)</h1>
+    <div style="margin-bottom: 15px; text-align: center; color: #dcdde1;">
+        控制：使用方向鍵 <b>【左 ← 】【 右 → 】【 下 ↓ 】</b>。
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="400" height="500"></canvas>
+
+        <div id="ui-panel">
+            <div>
+                <div class="status-box">
+                    <div class="status-item">總資產: <span id="money" class="highlight">1000</span> 元</div>
+                    <div class="status-item">目前深度: 地下 <span id="depth">0</span> 米</div>
+                </div>
+
+                <label class="upgrade-shop" id="radar-label">
+                    <input type="checkbox" id="buy-radar-cb">
+                    <div>
+                        <span style="font-weight: bold; color: #00a8ff;">加購高能探測器 (+50元)</span>
+                        <div style="font-size: 11px; color: #f5f6fa; margin-top: 3px;">使本趟視野提升至【周圍 2 格】</div>
+                    </div>
+                </label>
+
+                <div class="status-box" style="border-left: 4px solid #f1c40f;">
+                    <div style="font-size: 14px; color: #bdc3c7;">本次車上收穫 (未結算)</div>
+                    <div class="status-item">預估收益: <span id="cargo-value" class="highlight">0</span> 元</div>
+                    <div class="status-item">目前事故率: <span class="danger">10%</span></div>
+                </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button id="start-btn">開始挖掘 (總成本: <span id="current-cost">100</span>元)</button>
+                <button id="return-btn" disabled>返回路面結算獎勵</button>
+                <div id="log">新配備已上線！第一步開挖享有安全防護不坍方。</div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // UI 元素
+    const moneyEl = document.getElementById('money');
+    const depthEl = document.getElementById('depth');
+    const cargoValueEl = document.getElementById('cargo-value');
+    const startBtn = document.getElementById('start-btn');
+    const returnBtn = document.getElementById('return-btn');
+    const logEl = document.getElementById('log');
+    const buyRadarCb = document.getElementById('buy-radar-cb');
+    const currentCostEl = document.getElementById('current-cost');
+
+    // 遊戲地圖與平衡參數
+    const COLS = 8;
+    const ROWS = 10;
+    const TILE_SIZE = 50;
+
+    const TYPES = { SKY: 0, DIRT: 1, COPPER: 2, SILVER: 3, GOLD: 4, DRILLED: 5 };
+    const COLORS = {
+        0: '#87CEEB', 
+        1: '#8B4513', 
+        2: '#D2691E', 
+        3: '#C0C0C0', 
+        4: '#FFD700', 
+        5: '#2c1a0e', 
+        FOG: '#111111' 
+    };
+    const VALUES = { 1: 0, 2: 10, 3: 20, 4: 50, 5: 0 };
+
+    // 遊戲狀態變數
+    let playerMoney = 1000;
+    let cargoValue = 0;
+    let isPlaying = false;
+    let playerPos = { x: 3, y: 0 }; 
+    let mapData = [];
+    let currentScrollRow = 0; 
+    let hasRadar = false; // 本趟是否啟動探測器
+
+    // 初始化地圖
+    function initMap() {
+        mapData = [];
+        for (let r = 0; r < ROWS; r++) {
+            mapData.push(generateRow(r));
+        }
+    }
+
+    // 隨機生成一排礦物
+    function generateRow(rowIndex) {
+        let row = [];
+        let actualRowIndex = currentScrollRow + rowIndex;
+        for (let c = 0; c < COLS; c++) {
+            if (actualRowIndex === 0) {
+                row.push(TYPES.SKY);
+            } else {
+                let rand = Math.random();
+                if (rand < 0.05) row.push(TYPES.GOLD);
+                else if (rand < 0.15) row.push(TYPES.SILVER);
+                else if (rand < 0.35) row.push(TYPES.COPPER);
+                else row.push(TYPES.DIRT);
+            }
+        }
+        return row;
+    }
+
+    // 動態更新成本顯示
+    buyRadarCb.addEventListener('change', () => {
+        currentCostEl.innerText = buyRadarCb.checked ? '150' : '100';
+    });
+
+    // 判斷某個格子是否在視野內
+    function isVisible(c, r) {
+        if (mapData[r] && (mapData[r][c] === TYPES.SKY || mapData[r][c] === TYPES.DRILLED)) {
+            return true;
+        }
+        let dx = Math.abs(c - playerPos.x);
+        let dy = Math.abs(r - playerPos.y);
+        
+        // 根據是否有購買探測器，動態決定視野範圍（1格或2格）
+        let viewDistance = hasRadar ? 2 : 1;
+        return (dx <= viewDistance && dy <= viewDistance); 
+    }
+
+    // 繪製遊戲畫面
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                let type = mapData[r][c];
+                
+                if (isPlaying && !isVisible(c, r)) {
+                    ctx.fillStyle = COLORS.FOG;
+                    ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    ctx.strokeStyle = '#050505';
+                    ctx.strokeRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                } else {
+                    ctx.fillStyle = COLORS[type];
+                    ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    ctx.strokeStyle = '#221105';
+                    ctx.strokeRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+
+                    if(type === TYPES.COPPER) { ctx.fillStyle = '#fff'; ctx.fillRect(c*TILE_SIZE+20, r*TILE_SIZE+20, 10, 10); }
+                    if(type === TYPES.SILVER) { ctx.fillStyle = '#fff'; ctx.fillRect(c*TILE_SIZE+15, r*TILE_SIZE+15, 8, 8); ctx.fillRect(c*TILE_SIZE+25, r*TILE_SIZE+25, 6, 6); }
+                    if(type === TYPES.GOLD) { ctx.fillStyle = '#fff'; ctx.fillRect(c*TILE_SIZE+10, r*TILE_SIZE+20, 10, 10); ctx.fillRect(c*TILE_SIZE+28, r*TILE_SIZE+12, 8, 8); }
+                }
+            }
+        }
+
+        if (isPlaying) {
+            let px = playerPos.x * TILE_SIZE;
+            let py = playerPos.y * TILE_SIZE;
+            ctx.fillStyle = '#e74c3c'; 
+            ctx.fillRect(px + 5, py + 10, TILE_SIZE - 10, TILE_SIZE - 20);
+            ctx.fillStyle = '#f1c40f'; 
+            ctx.beginPath();
+            ctx.moveTo(px + TILE_SIZE/2, py + TILE_SIZE - 5);
+            ctx.lineTo(px + 10, py + TILE_SIZE - 15);
+            ctx.lineTo(px + TILE_SIZE - 10, py + TILE_SIZE - 15);
+            ctx.fill();
+        }
+    }
+
+    function addLog(text) {
+        logEl.innerHTML += `<br>${text}`;
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // 開始新的一局
+    startBtn.addEventListener('click', () => {
+        let cost = buyRadarCb.checked ? 150 : 100;
+        if (playerMoney < cost) {
+            alert(`資產不足 ${cost} 元，無法出車！`);
+            return;
+        }
+        
+        playerMoney -= cost;
+        hasRadar = buyRadarCb.checked; // 鎖定本趟的探測器狀態
+        cargoValue = 0;
+        currentScrollRow = 0;
+        playerPos = { x: Math.floor(COLS/2), y: 0 };
+        isPlaying = true;
+        initMap();
+        
+        startBtn.disabled = true;
+        buyRadarCb.disabled = true; // 遊戲中禁止更改加購
+        returnBtn.disabled = false;
+        
+        updateUI();
+        addLog(`--- 🚇 鑽地車潛入地底！花費成本 ${cost} 元 ---`);
+        if (hasRadar) addLog('✨ <span style="color:#00a8ff; font-weight:bold;">高能探測器已啟動</span>，視野擴展為周圍 2 格！');
+        addLog('🛡️ 總部提示：第一步開挖享有安全保護，100%不會坍方！');
+        draw();
+    });
+
+    // 結算安全回歸
+    returnBtn.addEventListener('click', () => {
+        if (!isPlaying) return;
+        playerMoney += cargoValue;
+        addLog(`🎉 安全重回地表！本次收穫 <span class="highlight">${cargoValue}</span> 元。`);
+        endGame();
+    });
+
+    function endGame() {
+        isPlaying = false;
+        cargoValue = 0;
+        startBtn.disabled = false;
+        buyRadarCb.disabled = false;
+        returnBtn.disabled = true;
+        updateUI();
+    }
+
+    function updateUI() {
+        moneyEl.innerText = playerMoney;
+        depthEl.innerText = currentScrollRow + playerPos.y;
+        cargoValueEl.innerText = cargoValue;
+    }
+
+    // 行動與挖掘邏輯
+    window.addEventListener('keydown', (e) => {
+        if (!isPlaying) return;
+
+        let nextX = playerPos.x;
+        let nextY = playerPos.y;
+        let isFirstMove = (currentScrollRow === 0 && playerPos.y === 0);
+
+        if (e.key === 'ArrowLeft' || e.key === 'a') {
+            if (isFirstMove) { addLog('⚠️ 第一回合必須先往下挖！'); return; }
+            nextX--;
+        } else if (e.key === 'ArrowRight' || e.key === 'd') {
+            if (isFirstMove) { addLog('⚠️ 第一回合必須先往下挖！'); return; }
+            nextX++;
+        } else if (e.key === 'ArrowDown' || e.key === 's') {
+            nextY++;
+        } else {
+            return; 
+        }
+
+        if (nextX < 0 || nextX >= COLS || nextY < 0) return;
+
+        // 地圖滾動
+        if (nextY >= 6) {
+            currentScrollRow++;
+            mapData.shift(); 
+            mapData.push(generateRow(ROWS - 1)); 
+            nextY--; 
+        }
+
+        let targetTile = mapData[nextY][nextX];
+
+        if (targetTile === TYPES.DRILLED || targetTile === TYPES.SKY) {
+            addLog('🚫 那裡已經挖過了。');
+            return;
+        }
+
+        // 移動車子
+        playerPos.x = nextX;
+        playerPos.y = nextY;
+
+        // 【規則調整1】：檢查是否為第一步。如果是第一步，100%安全不判定坍方
+        let isActualFirstStep = (currentScrollRow === 0 && playerPos.y === 1);
+        
+        if (!isActualFirstStep && Math.random() < 0.10) {
+            addLog('💥 <span class="danger">【坍方事故】</span>鑽地車不幸損毀！本次收益全數歸零。');
+            endGame();
+            draw();
+            return;
+        }
+
+        // 採礦
+        let minedValue = VALUES[targetTile];
+        cargoValue += minedValue;
+        
+        let tileNames = { 1: '泥土', 2: '銅礦', 3: '銀礦', 4: '金礦' };
+        if (minedValue > 0) {
+            addLog(`⛏️ 挖到 <span class="highlight">${tileNames[targetTile]}</span> (+${minedValue}元)`);
+        } else {
+            addLog(`⛏️ 只是普通的泥土。`);
+        }
+
+        // 標記已挖空
+        mapData[nextY][nextX] = TYPES.DRILLED;
+
+        updateUI();
+        draw();
+    });
+
+    initMap();
+    draw();
+</script>
+</body>
+</html>
